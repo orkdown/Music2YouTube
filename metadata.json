@@ -1,0 +1,8 @@
+{
+  "name": "Music to YouTube Link Converter",
+  "description": "Converts links from any music service to YouTube and YouTube Music links using the Odesli API.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
