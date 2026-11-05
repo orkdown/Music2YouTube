@@ -21,16 +21,17 @@ export default function App() {
     setCopiedYtMusic(false);
 
     try {
-      const response = await fetch(`/api/convert?url=${encodeURIComponent(url)}`);
+      const response = await fetch(`/api/convert?url=${encodeURIComponent(url.trim())}`);
       
       if (!response.ok) {
-        throw new Error('Failed to find the song. Please check the link and try again.');
+        const errJson = await response.json().catch(() => null);
+        throw new Error(errJson?.error || 'Failed to find the song. Please check the link and try again.');
       }
 
       const data = await response.json();
       
       const entityId = data.entityUniqueId;
-      const entity = data.entitiesByUniqueId[entityId];
+      const entity = data.entitiesByUniqueId?.[entityId];
       
       const youtubeLink = data.linksByPlatform?.youtube?.url;
       const ytMusicLink = data.linksByPlatform?.youtubeMusic?.url;
@@ -41,7 +42,7 @@ export default function App() {
 
       setResult({
         title: entity?.title || 'Unknown Title',
-        artist: entity?.artistName || 'Unknown Artist',
+        artist: entity?.artistName || '',
         thumbnail: entity?.thumbnailUrl,
         youtube: youtubeLink,
         youtubeMusic: ytMusicLink
@@ -63,7 +64,6 @@ export default function App() {
         // Fallback for HTTP environments (like VPS by IP address)
         const textArea = document.createElement("textarea");
         textArea.value = text;
-        // Make it invisible
         textArea.style.position = "absolute";
         textArea.style.left = "-999999px";
         document.body.prepend(textArea);
@@ -117,7 +117,7 @@ export default function App() {
             transition={{ duration: 0.5, delay: 0.2 }}
             className="text-neutral-400 text-lg max-w-lg mx-auto"
           >
-            Paste a link from Spotify, Apple Music, Yandex Music, or any other service to get the YouTube equivalent instantly.
+            Paste a link from Spotify, Apple Music, Yandex Music, Deezer, SoundCloud, or enter a song name to get direct YouTube links instantly.
           </motion.p>
         </div>
 
@@ -135,10 +135,10 @@ export default function App() {
               <LinkIcon className="w-5 h-5" />
             </div>
             <input
-              type="url"
+              type="text"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://open.spotify.com/track/..."
+              placeholder="Paste Spotify, Apple Music, Yandex link or song title..."
               className="flex-1 bg-transparent py-4 px-2 text-neutral-100 placeholder:text-neutral-600 focus:outline-none"
               required
             />
@@ -146,7 +146,7 @@ export default function App() {
               <button
                 type="submit"
                 disabled={loading || !url.trim()}
-                className="bg-neutral-100 text-neutral-950 hover:bg-white px-6 py-2.5 rounded-xl font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                className="bg-neutral-100 text-neutral-950 hover:bg-white px-6 py-2.5 rounded-xl font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 cursor-pointer"
               >
                 {loading ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
@@ -217,7 +217,7 @@ export default function App() {
                 <div className="flex-1 w-full space-y-6 text-center md:text-left">
                   <div>
                     <h2 className="text-2xl font-bold text-white mb-1 line-clamp-2">{result.title}</h2>
-                    <p className="text-neutral-400 text-lg">{result.artist}</p>
+                    {result.artist && <p className="text-neutral-400 text-lg">{result.artist}</p>}
                   </div>
 
                   <div className="space-y-3">
@@ -227,14 +227,14 @@ export default function App() {
                           href={result.youtube}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="flex-1 flex items-center justify-center md:justify-start gap-3 bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/20 py-3 px-4 rounded-xl transition-colors group"
+                          className="flex-1 flex items-center justify-center md:justify-start gap-3 bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/20 py-3 px-4 rounded-xl transition-colors group cursor-pointer"
                         >
                           <Youtube className="w-5 h-5 group-hover:scale-110 transition-transform" />
                           <span className="font-medium">Open in YouTube</span>
                         </a>
                         <button
                           onClick={() => copyToClipboard(result.youtube, 'youtube')}
-                          className="p-3 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-xl transition-colors border border-neutral-700"
+                          className="p-3 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-xl transition-colors border border-neutral-700 cursor-pointer"
                           title="Copy link"
                         >
                           {copiedYoutube ? <Check className="w-5 h-5 text-green-500" /> : <Copy className="w-5 h-5" />}
@@ -248,14 +248,14 @@ export default function App() {
                           href={result.youtubeMusic}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="flex-1 flex items-center justify-center md:justify-start gap-3 bg-neutral-800 hover:bg-neutral-700 text-white border border-neutral-700 py-3 px-4 rounded-xl transition-colors group"
+                          className="flex-1 flex items-center justify-center md:justify-start gap-3 bg-neutral-800 hover:bg-neutral-700 text-white border border-neutral-700 py-3 px-4 rounded-xl transition-colors group cursor-pointer"
                         >
                           <Music className="w-5 h-5 group-hover:scale-110 transition-transform" />
                           <span className="font-medium">Open in YouTube Music</span>
                         </a>
                         <button
                           onClick={() => copyToClipboard(result.youtubeMusic, 'ytmusic')}
-                          className="p-3 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-xl transition-colors border border-neutral-700"
+                          className="p-3 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-xl transition-colors border border-neutral-700 cursor-pointer"
                           title="Copy link"
                         >
                           {copiedYtMusic ? <Check className="w-5 h-5 text-green-500" /> : <Copy className="w-5 h-5" />}
