@@ -89,6 +89,40 @@ interface TrackMetadata {
   youtubeMusicUrl?: string;
 }
 
+// Fallback VK Music resolver without login / token using public index
+async function resolveVkWithoutToken(queryId: string): Promise<TrackMetadata | null> {
+  try {
+    const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(`site:vk.com ${queryId}`)}`;
+    const res = await fetch(searchUrl, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+      },
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+    const $ = cheerio.load(html);
+    const snippets = $(".result__snippet");
+
+    for (let i = 0; i < snippets.length; i++) {
+      const text = $(snippets[i]).text().trim();
+      // Match Artist - «Title» or Artist - "Title" or Artist - Title
+      const match = text.match(/([A-Za-zА-Яа-я0-9\s,\.\(\)]+)\s*[-–—]\s*[«"]([^»"]+)[»"]/);
+      if (match) {
+        const artist = match[1].trim();
+        const title = match[2].trim();
+        if (title && artist && !title.includes("Добро пожаловать") && !artist.includes("ВКонтакте")) {
+          return { title, artist };
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("VK DDG resolver failed:", e);
+  }
+  return null;
+}
+
 // Multi-provider metadata extractor
 async function getTrackMetadata(rawUrl: string): Promise<TrackMetadata | null> {
   let url = rawUrl;
@@ -232,6 +266,67 @@ async function getTrackMetadata(rawUrl: string): Promise<TrackMetadata | null> {
     }
   }
 
+  // 6. VKontakte (VK Music / Audio / Video / Clip)
+  if (url.includes("vk.com") || url.includes("vk.ru")) {
+    const vkAudioMatch =
+      url.match(/(?:audio|track|music\/track\/)(-?\d+)_(\d+)/) ||
+      url.match(/[?&]z=audio(-?\d+)_(\d+)/);
+    const vkToken = process.env.VK_TOKEN || process.env.VK_USER_TOKEN;
+
+    if (vkAudioMatch && vkToken) {
+      try {
+        const ownerId = vkAudioMatch[1];
+        const audioId = vkAudioMatch[2];
+        const apiUrl = `https://api.vk.com/method/audio.getById?audios=${ownerId}_${audioId}&access_token=${encodeURIComponent(vkToken)}&v=5.199`;
+        const res = await fetch(apiUrl, {
+          headers: { "User-Agent": "VKAndroidApp/8.20" },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const tr = data.response?.[0];
+          if (tr) {
+            return {
+              title: tr.title || "",
+              artist: tr.artist || "",
+              image: tr.album?.thumb?.photo_600 || tr.album?.thumb?.photo_300 || "",
+            };
+          }
+        }
+      } catch (e) {
+        console.warn("VK audio API error:", e);
+      }
+    }
+
+    // Tokenless VK Music public index resolver
+    if (vkAudioMatch) {
+      const ddgMeta = await resolveVkWithoutToken(vkAudioMatch[0]);
+      if (ddgMeta) {
+        return ddgMeta;
+      }
+    }
+
+    // VK video / clip / post metadata fallback
+    const vkVideoMatch = url.match(/(?:video|clip)(-?\d+)_(\d+)/);
+    if (vkVideoMatch) {
+      try {
+        const oembedUrl = `https://vk.com/oembed.php?url=${encodeURIComponent(url)}&format=json`;
+        const res = await fetch(oembedUrl);
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.title) {
+            return {
+              title: data.title,
+              artist: data.author_name || "",
+              image: data.thumbnail_url || "",
+            };
+          }
+        }
+      } catch (e) {
+        console.warn("VK video oEmbed error:", e);
+      }
+    }
+  }
+
   // 6. Songlink (Odesli) web page scraping (__NEXT_DATA__)
   try {
     const res = await fetch(`https://song.link/${encodeURIComponent(url)}`, {
@@ -295,33 +390,42 @@ async function getTrackMetadata(rawUrl: string): Promise<TrackMetadata | null> {
   }
 
   // 8. Generic Open Graph scraper (Cheerio)
-  try {
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      },
-    });
-    const html = await res.text();
-    const $ = cheerio.load(html);
-    let title = $('meta[property="og:title"]').attr("content") || $("title").text() || "";
-    let description = $('meta[property="og:description"]').attr("content") || "";
-    let image = $('meta[property="og:image"]').attr("content") || "";
-    let artist = "";
+  // Skip VK links here since unauthenticated VK requests return login wall pages
+  if (!url.includes("vk.com") && !url.includes("vk.ru")) {
+    try {
+      const res = await fetch(url, {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        },
+      });
+      const html = await res.text();
+      const $ = cheerio.load(html);
+      let title = $('meta[property="og:title"]').attr("content") || $("title").text() || "";
+      let description = $('meta[property="og:description"]').attr("content") || "";
+      let image = $('meta[property="og:image"]').attr("content") || "";
+      let artist = "";
 
-    if (url.includes("spotify.com")) {
-      title = title.replace(" - song and lyrics by ", " ");
-      artist = description.split("·")[0].trim();
-    } else if (url.includes("apple.com")) {
-      title = title.replace(" on Apple Music", "");
-      artist = description.split("·")[0].trim();
-    }
+      if (url.includes("spotify.com")) {
+        title = title.replace(" - song and lyrics by ", " ");
+        artist = description.split("·")[0].trim();
+      } else if (url.includes("apple.com")) {
+        title = title.replace(" on Apple Music", "");
+        artist = description.split("·")[0].trim();
+      }
 
-    if (title && !title.includes("Listening is everything")) {
-      return { title, artist, image };
+      if (
+        title &&
+        !title.includes("Listening is everything") &&
+        !title.includes("ВКонтакте") &&
+        !title.includes("Добро пожаловать") &&
+        !title.includes("VK ID")
+      ) {
+        return { title, artist, image };
+      }
+    } catch (e) {
+      console.warn("Generic scraper failed:", e);
     }
-  } catch (e) {
-    console.warn("Generic scraper failed:", e);
   }
 
   return null;
@@ -352,10 +456,26 @@ async function startServer() {
           url.includes("deezer.com") ||
           url.includes("youtube.com") ||
           url.includes("youtu.be") ||
-          url.includes("soundcloud.com")
+          url.includes("soundcloud.com") ||
+          url.includes("vk.com") ||
+          url.includes("vk.ru")
         ) {
           url = `https://${url}`;
         }
+      }
+
+      // If URL is a VK Music link, notify that VK Music requires authorization and is not supported natively
+      if (
+        url.includes("vk.com/audio") ||
+        url.includes("vk.ru/audio") ||
+        url.includes("vk.com/music") ||
+        url.includes("vk.ru/music") ||
+        url.includes("z=audio")
+      ) {
+        return res.status(400).json({
+          error: "VK Music links require authorization and cannot be played directly. Please enter the track title or use Spotify/Yandex Music.",
+          isVkMusic: true,
+        });
       }
 
       // If user provided an Odesli API key in environment, try official API first
